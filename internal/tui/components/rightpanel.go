@@ -13,6 +13,8 @@ import (
 type RightPanel struct {
 	chat             *messages.Chat
 	connectionStatus string
+	userNick         string
+	peerID           string
 	width            int
 	height           int
 	theme            lipgloss.Color
@@ -33,6 +35,14 @@ func (r *RightPanel) SetConnectionStatus(status string) {
 	r.connectionStatus = status
 }
 
+func (r *RightPanel) SetUserNick(nick string) {
+	r.userNick = nick
+}
+
+func (r *RightPanel) SetPeerID(peerID string) {
+	r.peerID = peerID
+}
+
 func (r *RightPanel) Update(msg tea.Msg) (*RightPanel, tea.Cmd) {
 	return r, nil
 }
@@ -42,51 +52,88 @@ func (r *RightPanel) View() string {
 		return ""
 	}
 
+	peerDisplay := ""
+	if r.peerID != "" {
+		peerShort := r.peerID
+		if len(peerShort) > 16 {
+			peerShort = peerShort[:14] + ".."
+		}
+		peerDisplay = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#666666")).
+			Render(peerShort)
+	}
+
+	// Инфо о текущем пользователе
+	userSection := lipgloss.JoinVertical(
+		lipgloss.Left,
+		lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#888888")).
+			Render("👤 YOUR IDENTITY"),
+		lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00ff00")).
+			Render(r.userNick),
+		peerDisplay,
+		lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#666666")).
+			Render(r.peerID[:16]+"..."),
+		"",
+	)
+
 	// Инфо о чате
-	nameStyle := lipgloss.NewStyle().
-		Foreground(r.theme).
-		Bold(true).
-		MarginBottom(1)
+	chatSection := lipgloss.JoinVertical(
+		lipgloss.Left,
+		lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#888888")).
+			Render("💬 CURRENT CHAT"),
+		lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00ff00")).
+			Render(r.chat.Name),
+		lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#666666")).
+			Render(fmt.Sprintf("Type: %s", r.chat.Type)),
+		"",
+	)
 
 	// Статус подключения
 	statusColor := lipgloss.Color("#ff0000")
 	if strings.Contains(r.connectionStatus, "ONLINE") {
 		statusColor = lipgloss.Color("#00ff00")
-	} else if strings.Contains(r.connectionStatus, "CONNECTING") {
+	} else if strings.Contains(r.connectionStatus, "LOCAL") {
 		statusColor = lipgloss.Color("#ffff00")
 	}
 
-	statusStyle := lipgloss.NewStyle().
-		Foreground(statusColor).
-		MarginBottom(2)
+	statusSection := lipgloss.JoinVertical(
+		lipgloss.Left,
+		lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#888888")).
+			Render("🔌 CONNECTION"),
+		lipgloss.NewStyle().
+			Foreground(statusColor).
+			Render(r.connectionStatus),
+		"",
+	)
 
-	// Заглушка для эмодзи
-	emojiTitle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#888888")).
-		MarginTop(2).
-		MarginBottom(1).
-		Render("QUICK EMOJIS")
-
-	emojis := "😊 😂 🔥 🚀 💯 ❤️ 🎉 🤔"
-	emojiStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#ffff00"))
+	// Эмодзи (заглушка)
+	emojiSection := lipgloss.JoinVertical(
+		lipgloss.Left,
+		lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#888888")).
+			Render("😊 QUICK EMOJIS"),
+		lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#ffff00")).
+			Render("😊 😂 🔥 🚀 💯 ❤️ 🎉 🤔"),
+	)
 
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
-		nameStyle.Render(fmt.Sprintf("📌 %s", r.chat.Name)),
-		statusStyle.Render(r.connectionStatus),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render("─── CHAT INFO ───"),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render(fmt.Sprintf("Type: %s", r.chat.Type)),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render("Encryption: 🔒 E2EE (mock)"),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render("Peers: 0 (local only)"),
-		emojiTitle,
-		emojiStyle.Render(emojis),
+		userSection,
+		chatSection,
+		statusSection,
+		emojiSection,
 	)
 
 	return lipgloss.NewStyle().
 		Padding(1, 2).
-		BorderLeft(true).
-		BorderLeftForeground(lipgloss.Color("#00aa00")).
 		Width(r.width).
 		Render(content)
 }

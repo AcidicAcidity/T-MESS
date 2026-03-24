@@ -23,8 +23,10 @@ func (c ChatItem) Title() string {
 	avatar := "💬"
 	if c.Chat.Type == "local" {
 		avatar = "📝"
-	} else if c.Chat.Type == "direct" {
+	} else if c.Chat.Type == "self" {
 		avatar = "👤"
+	} else if c.Chat.Type == "direct" {
+		avatar = "👥"
 	} else if c.Chat.Avatar != "" {
 		avatar = c.Chat.Avatar
 	}
@@ -55,6 +57,7 @@ type ChatList struct {
 	width    int
 	height   int
 	onSelect func(*messages.Chat)
+	onCreate func()
 }
 
 func NewChatList(theme lipgloss.Color) *ChatList {
@@ -88,6 +91,15 @@ func NewChatList(theme lipgloss.Color) *ChatList {
 
 func (cl *ChatList) Update(msg tea.Msg) (*ChatList, tea.Cmd) {
 	var cmd tea.Cmd
+
+	// Обработка создания чата
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		if keyMsg.String() == "ctrl+n" && cl.onCreate != nil {
+			cl.onCreate()
+			return cl, nil
+		}
+	}
+
 	cl.list, cmd = cl.list.Update(msg)
 
 	if selected, ok := cl.list.SelectedItem().(ChatItem); ok {
@@ -100,13 +112,31 @@ func (cl *ChatList) Update(msg tea.Msg) (*ChatList, tea.Cmd) {
 }
 
 func (cl *ChatList) View() string {
-	return cl.list.View()
+	width := cl.width
+	if width < 28 {
+		width = 28
+	}
+
+	// Добавляем подсказку о создании чата
+	hintStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#888888")).
+		MarginTop(1).
+		MarginLeft(2)
+
+	listView := cl.list.View()
+	hint := hintStyle.Render("Ctrl+N: New chat")
+
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		listView,
+		hint,
+	)
 }
 
 func (cl *ChatList) SetSize(width, height int) {
 	cl.width = width
 	cl.height = height
-	cl.list.SetSize(width, height)
+	cl.list.SetSize(width, height-2) // оставляем место для подсказки
 }
 
 func (cl *ChatList) SetChats(chats []*messages.Chat) {
@@ -114,13 +144,32 @@ func (cl *ChatList) SetChats(chats []*messages.Chat) {
 	for i, c := range chats {
 		items[i] = ChatItem{Chat: c}
 	}
+
+	// Сохраняем текущее выделение
+	currentSelected := cl.list.Index()
 	cl.list.SetItems(items)
+
+	// Восстанавливаем выделение, если возможно
+	if len(items) > 0 && currentSelected < len(items) && currentSelected >= 0 {
+		cl.list.Select(currentSelected)
+	} else if len(items) > 0 {
+		cl.list.Select(0)
+	}
 }
 
 func (cl *ChatList) SetOnSelect(f func(*messages.Chat)) {
 	cl.onSelect = f
 }
 
-func (cl *ChatList) Focus() {}
+func (cl *ChatList) SetOnCreate(f func()) {
+	cl.onCreate = f
+}
 
-func (cl *ChatList) Blur() {}
+func (cl *ChatList) Select(index int) {
+	if index >= 0 && index < len(cl.list.Items()) {
+		cl.list.Select(index)
+	}
+}
+
+func (cl *ChatList) Focus() {}
+func (cl *ChatList) Blur()  {}

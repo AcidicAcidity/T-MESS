@@ -56,6 +56,9 @@ func NewApp(identity *crypto.Identity, db *storage.Database, p2pNode *p2p.Node) 
 
 	// Загружаем никнейм из БД (если есть)
 	nick := loadNick(db)
+	if nick == "" {
+		nick = "Anonymous"
+	}
 
 	return &App{
 		splash:      NewSplashScreen(),
@@ -75,20 +78,36 @@ func NewApp(identity *crypto.Identity, db *storage.Database, p2pNode *p2p.Node) 
 	}
 }
 
+// loadNick загружает никнейм из БД
 func loadNick(db *storage.Database) string {
 	var nick string
 	err := db.DB().QueryRow("SELECT value FROM settings WHERE key = 'nickname'").Scan(&nick)
 	if err != nil {
-		return "Anonymous"
-	}
-	if nick == "" {
-		return "Anonymous"
+		return ""
 	}
 	return nick
 }
 
+// saveNick сохраняет никнейм в БД
 func saveNick(db *storage.Database, nick string) {
 	db.DB().Exec("INSERT OR REPLACE INTO settings (key, value) VALUES ('nickname', ?)", nick)
+}
+
+// createSelfChat создаёт чат с самим собой
+func (a *App) createSelfChat() {
+	chat, err := a.db.CreateSelfChat()
+	if err != nil {
+		a.rightPanel.SetConnectionStatus(fmt.Sprintf("⚠️ Failed to create chat: %v", err))
+		return
+	}
+
+	// Обновляем список чатов
+	a.chats = append(a.chats, chat)
+	a.chatList.SetChats(a.chats)
+
+	// Переключаемся на новый чат
+	a.switchToChat(chat)
+	a.rightPanel.SetConnectionStatus("✨ Personal Notes created. Write anything!")
 }
 
 func (a *App) Init() tea.Cmd {
@@ -112,19 +131,31 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.loadChats()
 			a.loadMessages("notes")
 			a.rightPanel.SetConnectionStatus("● LOCAL MODE")
+			a.inputField.SetOnSend(func(text string) {
+				a.sendMessage(text)
+			})
 			return a, nil
+
 		case components.MenuConnectGlobal:
 			a.state = StateChat
 			a.loadChats()
 			a.loadMessages("notes")
 			a.rightPanel.SetConnectionStatus("● GLOBAL MODE (P2P active)")
+			a.inputField.SetOnSend(func(text string) {
+				a.sendMessage(text)
+			})
 			return a, nil
+
 		case components.MenuSettings:
 			a.state = StateSettings
 			return a, nil
 		}
 
 	case tea.KeyMsg:
+		if a.state == StateChat && msg.String() == "ctrl+q" {
+			a.rightPanel.SetConnectionStatus("⚠️ Press Ctrl+C again to exit, any other key to cancel")
+			return a, nil
+		}
 		if a.state == StateChat && msg.String() == "ctrl+c" {
 			return a, tea.Quit
 		}
@@ -135,6 +166,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.splash, cmd = a.splash.Update(msg)
 		if a.splash.IsDone() {
 			a.ready = true
+			a.rightPanel.SetPeerID(a.identity.PeerID)
 			// Если ник не задан, показываем ввод, иначе сразу меню
 			if a.nick == "Anonymous" {
 				a.state = StateNickInput
@@ -191,6 +223,36 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, cmd
 
 	case StateChat:
+		// Обработка глобальных хоткеев в чате
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "ctrl+m":
+				a.state = StateMenu
+				return a, nil
+			case "ctrl+s":
+				a.state = StateSettings
+				return a, nil
+			case "ctrl+q":
+				return a, tea.Quit
+			case "ctrl+n":
+				a.createSelfChat()
+				return a, nil
+			case "ctrl+h": // предыдущий чат (вместо ctrl+[)
+				a.prevChat()
+				return a, nil
+			case "ctrl+l": // следующий чат (вместо ctrl+])
+				a.nextChat()
+				return a, nil
+			case "ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4", "ctrl+5", "ctrl+6", "ctrl+7", "ctrl+8", "ctrl+9":
+				idx := int(keyMsg.String()[5] - '1')
+				if idx >= 0 && idx < len(a.chats) {
+					a.switchToChat(a.chats[idx])
+					return a, nil
+				}
+			}
+		}
+
+		// Обновление компонентов чата
 		var cmds []tea.Cmd
 
 		newChatList, cmd1 := a.chatList.Update(msg)
@@ -235,29 +297,58 @@ func (a *App) View() string {
 }
 
 func (a *App) renderChat() string {
-	leftWidth := 28
-	rightWidth := 24
-	chatWidth := a.width - leftWidth - rightWidth - 4
-	chatHeight := a.height - 8
+	leftWidth := 30
+	rightWidth := 28
+	chatWidth := a.width - leftWidth - rightWidth - 6
 
-	a.chatList.SetSize(leftWidth, a.height-3)
+	if chatWidth < 40 {
+		chatWidth = 40
+	}
+
+	chatHeight := a.height - 8 - 3
+
+	a.chatList.SetSize(leftWidth, a.height-3-3)
 	a.messageView.SetSize(chatWidth, chatHeight)
-	a.rightPanel.SetSize(rightWidth, a.height-3)
+	a.rightPanel.SetSize(rightWidth, a.height-3-3)
 	a.inputField.SetSize(a.width)
 
+	// Стили заголовков с фоном для контраста
+	headerStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#00ff00")).
+		Bold(true).
+		Background(lipgloss.Color("#0a0a0a")).
+		Padding(0, 1)
+
+	leftHeader := headerStyle.Width(leftWidth).Render("📋 CHATS")
+	centerHeader := headerStyle.Width(chatWidth).Render("💬 MESSAGES")
+	rightHeader := headerStyle.Width(rightWidth).Render("ℹ️ INFO")
+
+	// Левая панель с яркой зелёной границей
 	leftBorder := lipgloss.NewStyle().
 		BorderRight(true).
-		BorderRightForeground(lipgloss.Color("#00aa00")).
-		PaddingRight(1)
+		BorderRightForeground(lipgloss.Color("#00ff00")).
+		BorderStyle(lipgloss.ThickBorder()).
+		PaddingRight(1).
+		Height(a.height - 3 - 3)
 
+	leftPanel := leftBorder.Render(
+		lipgloss.JoinVertical(lipgloss.Left, leftHeader, a.chatList.View()),
+	)
+
+	// Правая панель с яркой зелёной границей
 	rightBorder := lipgloss.NewStyle().
 		BorderLeft(true).
-		BorderLeftForeground(lipgloss.Color("#00aa00")).
-		PaddingLeft(1)
+		BorderLeftForeground(lipgloss.Color("#00ff00")).
+		BorderStyle(lipgloss.ThickBorder()).
+		PaddingLeft(1).
+		Height(a.height - 3 - 3)
 
-	leftPanel := leftBorder.Render(a.chatList.View())
-	centerPanel := a.messageView.View()
-	rightPanel := rightBorder.Render(a.rightPanel.View())
+	rightPanel := rightBorder.Render(
+		lipgloss.JoinVertical(lipgloss.Left, rightHeader, a.rightPanel.View()),
+	)
+
+	// Центральная панель
+	centerPanel := lipgloss.JoinVertical(lipgloss.Left, centerHeader, a.messageView.View())
 
 	mainContent := lipgloss.JoinHorizontal(
 		lipgloss.Top,
@@ -293,12 +384,27 @@ func (a *App) loadChats() {
 	a.chatList.SetChats(chats)
 
 	a.chatList.SetOnSelect(func(chat *messages.Chat) {
-		a.currentChat = chat
-		a.loadMessages(chat.ID)
-		a.rightPanel.SetChat(chat)
+		a.switchToChat(chat)
 	})
-}
 
+	a.chatList.SetOnCreate(func() {
+		a.createSelfChat()
+	})
+
+	// Если есть чаты, выбираем первый
+	if len(chats) > 0 {
+		a.currentChat = chats[0]
+		a.loadMessages(chats[0].ID)
+		a.rightPanel.SetChat(chats[0])
+		a.chatList.Select(0) // выделяем первый чат в списке
+	}
+
+	a.rightPanel.SetUserNick(a.nick)
+
+	if a.identity != nil {
+		a.rightPanel.SetPeerID(a.identity.PeerID)
+	}
+}
 func (a *App) loadMessages(chatID string) {
 	msgs, err := a.db.GetMessages(chatID, 100)
 	if err != nil {
@@ -354,6 +460,17 @@ func (a *App) renderTopBar() string {
 		title = a.currentChat.Name
 	}
 
+	// Счётчик чатов
+	chatCounter := ""
+	if len(a.chats) > 0 && a.currentChat != nil {
+		for i, chat := range a.chats {
+			if chat.ID == a.currentChat.ID {
+				chatCounter = fmt.Sprintf(" [%d/%d]", i+1, len(a.chats))
+				break
+			}
+		}
+	}
+
 	titleStyle := lipgloss.NewStyle().
 		Foreground(a.theme.Primary).
 		Bold(true).
@@ -363,15 +480,77 @@ func (a *App) renderTopBar() string {
 		Foreground(lipgloss.Color("#00ff00")).
 		MarginRight(1)
 
-	left := lipgloss.JoinHorizontal(lipgloss.Left, titleStyle.Render(title))
-	right := statusStyle.Render("● ONLINE")
+	hintStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#888888")).
+		MarginRight(2)
+
+	left := lipgloss.JoinHorizontal(
+		lipgloss.Left,
+		titleStyle.Render(title+chatCounter),
+	)
+
+	right := lipgloss.JoinHorizontal(
+		lipgloss.Right,
+		hintStyle.Render("Ctrl+N:New | Ctrl+[/]:Chat | Ctrl+1-9:Switch | Ctrl+M:Menu | Ctrl+S:Settings | Ctrl+Q:Quit"),
+		statusStyle.Render("● ONLINE"),
+	)
 
 	return lipgloss.NewStyle().
 		Width(a.width).
 		Padding(0, 1).
 		BorderBottom(true).
-		BorderBottomForeground(a.theme.Border).
+		BorderBottomForeground(lipgloss.Color("#00ff00")).
+		BorderStyle(lipgloss.ThickBorder()).
 		Render(lipgloss.JoinHorizontal(lipgloss.Left, left, right))
+}
+
+// nextChat переключается на следующий чат
+func (a *App) nextChat() {
+	if len(a.chats) == 0 {
+		return
+	}
+
+	currentIndex := -1
+	for i, chat := range a.chats {
+		if chat.ID == a.currentChat.ID {
+			currentIndex = i
+			break
+		}
+	}
+
+	nextIndex := (currentIndex + 1) % len(a.chats)
+	a.switchToChat(a.chats[nextIndex])
+}
+
+// prevChat переключается на предыдущий чат
+func (a *App) prevChat() {
+	if len(a.chats) == 0 {
+		return
+	}
+
+	currentIndex := -1
+	for i, chat := range a.chats {
+		if chat.ID == a.currentChat.ID {
+			currentIndex = i
+			break
+		}
+	}
+
+	prevIndex := currentIndex - 1
+	if prevIndex < 0 {
+		prevIndex = len(a.chats) - 1
+	}
+	a.switchToChat(a.chats[prevIndex])
+}
+
+// switchToChat переключает на указанный чат
+func (a *App) switchToChat(chat *messages.Chat) {
+	a.currentChat = chat
+	a.loadMessages(chat.ID)
+	a.rightPanel.SetChat(chat)
+
+	// Обновляем выделение в списке
+	a.chatList.SetChats(a.chats)
 }
 
 func (a *App) Run() error {

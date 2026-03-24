@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/AcidicAcidity/t-mess/internal/messages"
@@ -81,4 +82,38 @@ func (d *Database) CreateChat(chat *messages.Chat) error {
         VALUES (?, ?, ?, ?, ?, ?)
     `, chat.ID, chat.Name, chat.Type, chat.LastMessage, chat.LastTime.Unix(), chat.UnreadCount)
 	return err
+}
+
+func (d *Database) CreateSelfChat() (*messages.Chat, error) {
+	// Проверяем, существует ли уже
+	var count int
+	err := d.db.QueryRow("SELECT COUNT(*) FROM chats WHERE type = 'self'").Scan(&count)
+	if err != nil {
+		return nil, err
+	}
+
+	if count > 0 {
+		// Возвращаем существующий
+		var chat messages.Chat
+		err = d.db.QueryRow(`
+            SELECT id, name, type, avatar, last_message, last_time, unread_count
+            FROM chats WHERE type = 'self'
+        `).Scan(&chat.ID, &chat.Name, &chat.Type, &chat.Avatar, &chat.LastMessage, &chat.LastTime, &chat.UnreadCount)
+		return &chat, err
+	}
+
+	// Создаём новый
+	chat := &messages.Chat{
+		ID:     "self_" + fmt.Sprintf("%d", time.Now().UnixNano()),
+		Name:   "📔 Personal Notes",
+		Type:   "self",
+		Avatar: "👤",
+	}
+
+	_, err = d.db.Exec(`
+        INSERT INTO chats (id, name, type, avatar, last_message, last_time, unread_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, chat.ID, chat.Name, chat.Type, chat.Avatar, "", 0, 0)
+
+	return chat, err
 }
