@@ -3,7 +3,9 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
+	"github.com/google/uuid"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -25,7 +27,14 @@ func NewDatabase(path string) (*Database, error) {
 		return nil, fmt.Errorf("failed to init schema: %w", err)
 	}
 
-	return &Database{db: db}, nil
+	d := &Database{db: db}
+
+	// Создаём дефолтный чат Notes, если его нет
+	if err := d.ensureNotesChat(); err != nil {
+		return nil, fmt.Errorf("failed to create notes chat: %w", err)
+	}
+
+	return d, nil
 }
 
 func (d *Database) Close() error {
@@ -86,4 +95,33 @@ func initSchema(db *sql.DB) error {
 
 	_, err := db.Exec(schema)
 	return err
+}
+
+// ensureNotesChat создаёт чат Notes, если его нет
+func (d *Database) ensureNotesChat() error {
+	var count int
+	err := d.db.QueryRow("SELECT COUNT(*) FROM chats WHERE id = 'notes'").Scan(&count)
+	if err != nil {
+		return err
+	}
+
+	if count == 0 {
+		now := time.Now().Unix()
+		_, err := d.db.Exec(`
+            INSERT INTO chats (id, name, type, avatar, last_message, last_time, unread_count, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `, "notes", "📝 Notes", "local", "📝", "Welcome to T-MESS! Send a message here to test.", now, 0, 1)
+		if err != nil {
+			return err
+		}
+
+		// Добавляем приветственное сообщение
+		msgID := uuid.New().String()
+		_, err = d.db.Exec(`
+            INSERT INTO messages (id, chat_id, sender_id, text, timestamp, is_own, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `, msgID, "notes", "system", "Welcome to T-MESS! This is your Notes chat. Use it to test messages.", now, 0, "sent")
+		return err
+	}
+	return nil
 }
