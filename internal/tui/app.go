@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"fmt"
+	"time"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -17,14 +20,20 @@ type App struct {
 	identity *crypto.Identity
 	db       *storage.Database
 	theme    Theme
+
+	// Статус для отображения
+	statusMsg  string
+	statusTime time.Time
 }
 
 func NewApp(identity *crypto.Identity, db *storage.Database) *App {
 	return &App{
-		splash:   NewSplashScreen(),
-		identity: identity,
-		db:       db,
-		theme:    Matrix,
+		splash:     NewSplashScreen(),
+		identity:   identity,
+		db:         db,
+		theme:      Matrix,
+		statusMsg:  "Initializing...",
+		statusTime: time.Now(),
 	}
 }
 
@@ -43,8 +52,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !a.ready {
 			return a, nil
 		}
-		if msg.String() == "ctrl+c" {
+		switch msg.String() {
+		case "ctrl+c":
 			return a, tea.Quit
+		case "s":
+			a.statusMsg = fmt.Sprintf("Node: %s", a.identity.PeerID[:16]+"...")
+			a.statusTime = time.Now()
 		}
 	}
 
@@ -53,7 +66,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.splash, cmd = a.splash.Update(msg)
 		if a.splash.IsDone() {
 			a.ready = true
-			return a, nil
+			a.statusMsg = fmt.Sprintf("Node: %s", a.identity.PeerID[:16]+"...")
 		}
 		return a, cmd
 	}
@@ -66,6 +79,12 @@ func (a *App) View() string {
 		return a.splash.View()
 	}
 
+	// Статусная строка
+	statusStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#666666")).
+		MarginBottom(1)
+
+	// Основное окно
 	infoStyle := lipgloss.NewStyle().
 		Foreground(a.theme.Primary).
 		Border(lipgloss.RoundedBorder()).
@@ -74,6 +93,7 @@ func (a *App) View() string {
 
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
+		statusStyle.Render(fmt.Sprintf("> %s", a.statusMsg)),
 		infoStyle.Render("Welcome to T-MESS!"),
 		"",
 		lipgloss.NewStyle().Foreground(a.theme.Secondary).Render("Node ID:"),
@@ -82,7 +102,7 @@ func (a *App) View() string {
 		lipgloss.NewStyle().Foreground(a.theme.Secondary).Render("Fingerprint:"),
 		a.identity.Fingerprint(),
 		"",
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render("Press Ctrl+C to quit"),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render("Press Ctrl+C to quit | s - show node info"),
 	)
 
 	return lipgloss.Place(

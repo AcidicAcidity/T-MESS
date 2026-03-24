@@ -6,6 +6,7 @@ import (
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
@@ -19,13 +20,13 @@ type Node struct {
 	cancel context.CancelFunc
 }
 
-func NewNode(ctx context.Context, privKey interface{}) (*Node, error) {
+func NewNode(ctx context.Context, privKey crypto.PrivKey) (*Node, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	// Создаём хост с случайным портом
 	host, err := libp2p.New(
 		libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"),
-		libp2p.Identity(privKey.(libp2p.PrivKey)),
+		libp2p.Identity(privKey),
 	)
 	if err != nil {
 		cancel()
