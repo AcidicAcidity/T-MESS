@@ -9,6 +9,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/tyler-smith/go-bip39"
+	"golang.org/x/crypto/ed25519"
 )
 
 type Identity struct {
@@ -35,9 +36,12 @@ func GenerateNewIdentity() (*Identity, error) {
 	// 3. Генерируем seed из мнемоники
 	seed := bip39.NewSeed(mnemonic, "")
 
-	// 4. Создаём Ed25519 ключ из seed (детерминированно)
-	// Используем первые 32 байта seed как приватный ключ
-	privKey, err := crypto.UnmarshalEd25519PrivateKey(seed[:32])
+	// 4. Создаём Ed25519 ключ из seed
+	// Используем стандартную библиотеку ed25519 для генерации ключа
+	privateKey := ed25519.NewKeyFromSeed(seed[:32])
+
+	// 5. Конвертируем в libp2p формат
+	privKey, err := crypto.UnmarshalEd25519PrivateKey(privateKey)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +107,7 @@ func LoadOrCreateIdentity(path string) (*Identity, error) {
 		return nil, err
 	}
 
-	// Сохраняем мнемонику отдельно (опционально)
+	// Сохраняем мнемонику отдельно
 	mnemonicPath := path + ".mnemonic"
 	if err := os.WriteFile(mnemonicPath, []byte(identity.Mnemonic), 0600); err != nil {
 		return nil, err
