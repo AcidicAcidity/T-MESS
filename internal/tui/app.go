@@ -88,3 +88,10 @@ func (a *App) View() string {
 		content,
 	)
 }
+
+// Run запускает TUI приложение
+func (a *App) Run() error {
+	p := tea.NewProgram(a)
+	_, err := p.Run()
+	return err
+}

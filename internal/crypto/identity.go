@@ -1,7 +1,6 @@
 package crypto
 
 import (
-	"crypto/rand"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
@@ -19,38 +18,38 @@ type Identity struct {
 	Mnemonic   string
 }
 
-// GenerateNewIdentity создаёт новую идентичность
+// GenerateNewIdentity создаёт новую идентичность из мнемонической фразы
 func GenerateNewIdentity() (*Identity, error) {
-	// Генерируем энтропию для 12 слов
+	// 1. Генерируем энтропию для 12 слов
 	entropy, err := bip39.NewEntropy(128)
 	if err != nil {
 		return nil, err
 	}
 
+	// 2. Получаем мнемоническую фразу
 	mnemonic, err := bip39.NewMnemonic(entropy)
 	if err != nil {
 		return nil, err
 	}
 
+	// 3. Генерируем seed из мнемоники
 	seed := bip39.NewSeed(mnemonic, "")
 
-	// Создаём Ed25519 ключ из seed (детерминированно)
-	privateKey, _, err := crypto.GenerateEd25519Key(rand.Reader)
+	// 4. Создаём Ed25519 ключ из seed (детерминированно)
+	// Используем первые 32 байта seed как приватный ключ
+	privKey, err := crypto.UnmarshalEd25519PrivateKey(seed[:32])
 	if err != nil {
 		return nil, err
 	}
 
-	// TODO: Использовать seed для детерминированной генерации
-	// Для прототипа пока случайный ключ
-
-	peerID, err := peer.IDFromPrivateKey(privateKey)
+	peerID, err := peer.IDFromPrivateKey(privKey)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Identity{
-		PrivateKey: privateKey,
-		PublicKey:  privateKey.GetPublic(),
+		PrivateKey: privKey,
+		PublicKey:  privKey.GetPublic(),
 		PeerID:     peerID.String(),
 		Mnemonic:   mnemonic,
 	}, nil
