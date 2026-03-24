@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/AcidicAcidity/t-mess/internal/crypto"
+	"github.com/AcidicAcidity/t-mess/internal/p2p"
 	"github.com/AcidicAcidity/t-mess/internal/storage"
 )
 
@@ -19,6 +20,7 @@ type App struct {
 
 	identity *crypto.Identity
 	db       *storage.Database
+	p2pNode  *p2p.Node
 	theme    Theme
 
 	// Статус для отображения
@@ -26,11 +28,12 @@ type App struct {
 	statusTime time.Time
 }
 
-func NewApp(identity *crypto.Identity, db *storage.Database) *App {
+func NewApp(identity *crypto.Identity, db *storage.Database, p2pNode *p2p.Node) *App {
 	return &App{
 		splash:     NewSplashScreen(),
 		identity:   identity,
 		db:         db,
+		p2pNode:    p2pNode,
 		theme:      Matrix,
 		statusMsg:  "Initializing...",
 		statusTime: time.Now(),
@@ -56,7 +59,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return a, tea.Quit
 		case "s":
-			a.statusMsg = fmt.Sprintf("Node: %s", a.identity.PeerID[:16]+"...")
+			// Показываем информацию об узле
+			a.statusMsg = fmt.Sprintf("Node ID: %s | Peers: %d",
+				a.identity.PeerID[:16]+"...",
+				len(a.p2pNode.Host.Network().Peers()),
+			)
+			a.statusTime = time.Now()
+		case "a":
+			// Показываем адреса
+			addrs := a.p2pNode.Addrs()
+			if len(addrs) > 0 {
+				a.statusMsg = fmt.Sprintf("Listening on: %s", addrs[0])
+			} else {
+				a.statusMsg = "No addresses available"
+			}
 			a.statusTime = time.Now()
 		}
 	}
@@ -66,7 +82,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.splash, cmd = a.splash.Update(msg)
 		if a.splash.IsDone() {
 			a.ready = true
-			a.statusMsg = fmt.Sprintf("Node: %s", a.identity.PeerID[:16]+"...")
+			a.statusMsg = fmt.Sprintf("Node: %s | Press 'a' for addresses, 's' for status",
+				a.identity.PeerID[:16]+"...")
 		}
 		return a, cmd
 	}
@@ -102,7 +119,7 @@ func (a *App) View() string {
 		lipgloss.NewStyle().Foreground(a.theme.Secondary).Render("Fingerprint:"),
 		a.identity.Fingerprint(),
 		"",
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render("Press Ctrl+C to quit | s - show node info"),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render("Commands: s - node status | a - addresses | Ctrl+C - quit"),
 	)
 
 	return lipgloss.Place(

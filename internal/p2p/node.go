@@ -91,3 +91,21 @@ func (n *Node) ConnectToPeer(ctx context.Context, addr string) error {
 	}
 	return n.Host.Connect(ctx, *peerInfo)
 }
+
+// SendMessage отправляет сообщение в топик чата
+func (n *Node) SendMessage(ctx context.Context, topicName string, data []byte) error {
+	topic, err := n.PubSub.Join(topicName)
+	if err != nil {
+		return err
+	}
+	return topic.Publish(ctx, data)
+}
+
+// Subscribe подписывается на топик
+func (n *Node) Subscribe(topicName string) (*pubsub.Subscription, error) {
+	topic, err := n.PubSub.Join(topicName)
+	if err != nil {
+		return nil, err
+	}
+	return topic.Subscribe()
+}

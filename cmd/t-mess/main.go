@@ -29,7 +29,6 @@ func main() {
 	}
 	defer logFile.Close()
 
-	// Пишем логи и в файл, и в консоль (до TUI)
 	log.SetOutput(logFile)
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
@@ -72,8 +71,8 @@ func main() {
 		os.Exit(0)
 	}()
 
-	// 5. Запуск TUI
-	app := tui.NewApp(identity, db)
+	// 5. Запуск TUI с передачей P2P узла
+	app := tui.NewApp(identity, db, p2pNode)
 	if err := app.Run(); err != nil {
 		log.Fatalf("TUI error: %v", err)
 	}
