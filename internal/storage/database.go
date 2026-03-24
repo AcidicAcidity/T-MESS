@@ -88,6 +88,11 @@ func initSchema(db *sql.DB) error {
         signature BLOB,
         PRIMARY KEY(message_id, user_id)
     );
+	
+	CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+	);
 
     CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id);
     CREATE INDEX IF NOT EXISTS idx_messages_time ON messages(timestamp);

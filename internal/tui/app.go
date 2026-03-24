@@ -14,11 +14,21 @@ import (
 	"github.com/AcidicAcidity/t-mess/internal/tui/components"
 )
 
+type AppState int
+
+const (
+	StateNickInput AppState = iota
+	StateMenu
+	StateSettings
+	StateChat
+)
+
 type App struct {
 	splash *SplashScreen
 	ready  bool
 	width  int
 	height int
+	state  AppState
 
 	identity *crypto.Identity
 	db       *storage.Database
@@ -26,6 +36,9 @@ type App struct {
 	theme    Theme
 
 	// Компоненты
+	nickInput   *components.NickInput
+	menu        *components.Menu
+	settings    *components.Settings
 	chatList    *components.ChatList
 	messageView *components.MessageView
 	inputField  *components.InputField
@@ -35,10 +48,14 @@ type App struct {
 	currentChat *messages.Chat
 	chats       []*messages.Chat
 	messages    []*messages.Message
+	nick        string
 }
 
 func NewApp(identity *crypto.Identity, db *storage.Database, p2pNode *p2p.Node) *App {
 	themeColor := lipgloss.Color(Matrix.Primary)
+
+	// Загружаем никнейм из БД (если есть)
+	nick := loadNick(db)
 
 	return &App{
 		splash:      NewSplashScreen(),
@@ -46,11 +63,32 @@ func NewApp(identity *crypto.Identity, db *storage.Database, p2pNode *p2p.Node) 
 		db:          db,
 		p2pNode:     p2pNode,
 		theme:       Matrix,
+		state:       StateNickInput,
+		nick:        nick,
+		nickInput:   components.NewNickInput(themeColor),
+		menu:        components.NewMenu(themeColor, nick),
+		settings:    components.NewSettings(themeColor, nick, "matrix", "English"),
 		chatList:    components.NewChatList(themeColor),
 		messageView: components.NewMessageView(themeColor),
 		inputField:  components.NewInputField(),
 		rightPanel:  components.NewRightPanel(themeColor),
 	}
+}
+
+func loadNick(db *storage.Database) string {
+	var nick string
+	err := db.DB().QueryRow("SELECT value FROM settings WHERE key = 'nickname'").Scan(&nick)
+	if err != nil {
+		return "Anonymous"
+	}
+	if nick == "" {
+		return "Anonymous"
+	}
+	return nick
+}
+
+func saveNick(db *storage.Database, nick string) {
+	db.DB().Exec("INSERT OR REPLACE INTO settings (key, value) VALUES ('nickname', ?)", nick)
 }
 
 func (a *App) Init() tea.Cmd {
@@ -64,11 +102,30 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.height = msg.Height
 		a.handleResize(msg.Width, msg.Height)
 
-	case tea.KeyMsg:
-		if !a.ready {
+	case components.ExitRequestMsg:
+		return a, tea.Quit
+
+	case components.MenuSelectedMsg:
+		switch msg.Choice {
+		case components.MenuConnectLocal:
+			a.state = StateChat
+			a.loadChats()
+			a.loadMessages("notes")
+			a.rightPanel.SetConnectionStatus("● LOCAL MODE")
+			return a, nil
+		case components.MenuConnectGlobal:
+			a.state = StateChat
+			a.loadChats()
+			a.loadMessages("notes")
+			a.rightPanel.SetConnectionStatus("● GLOBAL MODE (P2P active)")
+			return a, nil
+		case components.MenuSettings:
+			a.state = StateSettings
 			return a, nil
 		}
-		if msg.String() == "ctrl+c" {
+
+	case tea.KeyMsg:
+		if a.state == StateChat && msg.String() == "ctrl+c" {
 			return a, tea.Quit
 		}
 	}
@@ -78,90 +135,84 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.splash, cmd = a.splash.Update(msg)
 		if a.splash.IsDone() {
 			a.ready = true
-			a.loadChats()
-			a.loadMessages("notes")
-			a.rightPanel.SetConnectionStatus("● LOCAL ONLY (mock)")
-
-			// Устанавливаем коллбек для отправки
-			a.inputField.SetOnSend(func(text string) {
-				a.sendMessage(text)
-			})
+			// Если ник не задан, показываем ввод, иначе сразу меню
+			if a.nick == "Anonymous" {
+				a.state = StateNickInput
+			} else {
+				a.state = StateMenu
+			}
 		}
 		return a, cmd
 	}
 
-	// Обновляем компоненты
-	var cmd tea.Cmd
+	// Обработка в зависимости от состояния
+	switch a.state {
+	case StateNickInput:
+		newInput, cmd := a.nickInput.Update(msg)
+		a.nickInput = newInput
 
-	newChatList, cmd1 := a.chatList.Update(msg)
-	a.chatList = newChatList
-	cmd = tea.Batch(cmd, cmd1)
-
-	newMsgView, cmd2 := a.messageView.Update(msg)
-	a.messageView = newMsgView
-	cmd = tea.Batch(cmd, cmd2)
-
-	newInput, cmd3 := a.inputField.Update(msg)
-	a.inputField = newInput
-	cmd = tea.Batch(cmd, cmd3)
-
-	newRightPanel, cmd4 := a.rightPanel.Update(msg)
-	a.rightPanel = newRightPanel
-	cmd = tea.Batch(cmd, cmd4)
-
-	return a, cmd
-}
-
-func (a *App) sendMessage(text string) {
-	if a.currentChat == nil {
-		return
-	}
-
-	// Генерируем ID сообщения
-	msgID := fmt.Sprintf("%d", time.Now().UnixNano())
-
-	msg := &messages.Message{
-		ID:        msgID,
-		ChatID:    a.currentChat.ID,
-		SenderID:  a.identity.PeerID,
-		Text:      text,
-		Timestamp: time.Now(),
-		IsOwn:     true,
-		Status:    "sent",
-	}
-
-	// Сохраняем в БД
-	if err := a.db.SaveMessage(msg); err != nil {
-		a.rightPanel.SetConnectionStatus(fmt.Sprintf("⚠️ Save error: %v", err))
-		return
-	}
-
-	// Добавляем в UI (мгновенно)
-	a.messageView.AddMessage(msg)
-
-	// Обновляем последнее сообщение в чате в БД
-	_, err := a.db.DB().Exec(
-		"UPDATE chats SET last_message = ?, last_time = ? WHERE id = ?",
-		text, time.Now().Unix(), a.currentChat.ID,
-	)
-	if err != nil {
-		a.rightPanel.SetConnectionStatus("⚠️ Failed to update chat")
-	}
-
-	// Обновляем локальный чат в списке
-	for _, chat := range a.chats {
-		if chat.ID == a.currentChat.ID {
-			chat.LastMessage = text
-			chat.LastTime = time.Now()
-			break
+		// Устанавливаем колбек сохранения
+		if a.nickInput != nil {
+			a.nickInput.SetOnConfirm(func(nick string) {
+				a.nick = nick
+				saveNick(a.db, nick)
+				a.state = StateMenu
+				a.menu.SetNick(nick)
+			})
 		}
+
+		if a.nickInput.IsDone() {
+			a.state = StateMenu
+		}
+		return a, cmd
+
+	case StateMenu:
+		newMenu, cmd := a.menu.Update(msg)
+		a.menu = newMenu
+		return a, cmd
+
+	case StateSettings:
+		if a.settings != nil {
+			a.settings.SetOnSave(func(nick, themeName, lang string) {
+				a.nick = nick
+				saveNick(a.db, nick)
+				// TODO: применить тему
+				// TODO: применить язык
+				a.state = StateMenu
+				a.menu.SetNick(nick)
+			})
+			a.settings.SetOnBack(func() {
+				a.state = StateMenu
+			})
+		}
+
+		newSettings, cmd := a.settings.Update(msg)
+		a.settings = newSettings
+		return a, cmd
+
+	case StateChat:
+		var cmds []tea.Cmd
+
+		newChatList, cmd1 := a.chatList.Update(msg)
+		a.chatList = newChatList
+		cmds = append(cmds, cmd1)
+
+		newMsgView, cmd2 := a.messageView.Update(msg)
+		a.messageView = newMsgView
+		cmds = append(cmds, cmd2)
+
+		newInput, cmd3 := a.inputField.Update(msg)
+		a.inputField = newInput
+		cmds = append(cmds, cmd3)
+
+		newRightPanel, cmd4 := a.rightPanel.Update(msg)
+		a.rightPanel = newRightPanel
+		cmds = append(cmds, cmd4)
+
+		return a, tea.Batch(cmds...)
 	}
 
-	// Перерисовываем список чатов (чтобы обновилось превью)
-	a.chatList.SetChats(a.chats)
-
-	// TODO: отправка через P2P (пока только локально)
-	a.rightPanel.SetConnectionStatus("● LOCAL MODE (P2P coming soon)")
+	return a, nil
 }
 
 func (a *App) View() string {
@@ -169,10 +220,24 @@ func (a *App) View() string {
 		return a.splash.View()
 	}
 
-	// Ширины панелей
+	switch a.state {
+	case StateNickInput:
+		return a.nickInput.View()
+	case StateMenu:
+		return a.menu.View()
+	case StateSettings:
+		return a.settings.View()
+	case StateChat:
+		return a.renderChat()
+	}
+
+	return ""
+}
+
+func (a *App) renderChat() string {
 	leftWidth := 28
 	rightWidth := 24
-	chatWidth := a.width - leftWidth - rightWidth - 4 // -4 на разделители
+	chatWidth := a.width - leftWidth - rightWidth - 4
 	chatHeight := a.height - 8
 
 	a.chatList.SetSize(leftWidth, a.height-3)
@@ -180,7 +245,6 @@ func (a *App) View() string {
 	a.rightPanel.SetSize(rightWidth, a.height-3)
 	a.inputField.SetSize(a.width)
 
-	// Стили для разделителей
 	leftBorder := lipgloss.NewStyle().
 		BorderRight(true).
 		BorderRightForeground(lipgloss.Color("#00aa00")).
@@ -191,16 +255,10 @@ func (a *App) View() string {
 		BorderLeftForeground(lipgloss.Color("#00aa00")).
 		PaddingLeft(1)
 
-	// Левая панель с рамкой
 	leftPanel := leftBorder.Render(a.chatList.View())
-
-	// Центральная панель (без рамки)
 	centerPanel := a.messageView.View()
-
-	// Правая панель с рамкой
 	rightPanel := rightBorder.Render(a.rightPanel.View())
 
-	// Основное содержимое
 	mainContent := lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		leftPanel,
@@ -208,7 +266,6 @@ func (a *App) View() string {
 		rightPanel,
 	)
 
-	// Верхний бар
 	topBar := a.renderTopBar()
 
 	return lipgloss.JoinVertical(
@@ -222,13 +279,9 @@ func (a *App) View() string {
 func (a *App) handleResize(width, height int) {
 	a.width = width
 	a.height = height
-	// Размеры компонентов будут установлены в View
-}
-
-func (a *App) Run() error {
-	p := tea.NewProgram(a)
-	_, err := p.Run()
-	return err
+	a.nickInput.SetSize(width, height)
+	a.menu.SetSize(width, height)
+	a.settings.SetSize(width, height)
 }
 
 func (a *App) loadChats() {
@@ -239,7 +292,6 @@ func (a *App) loadChats() {
 	a.chats = chats
 	a.chatList.SetChats(chats)
 
-	// Устанавливаем коллбек выбора чата
 	a.chatList.SetOnSelect(func(chat *messages.Chat) {
 		a.currentChat = chat
 		a.loadMessages(chat.ID)
@@ -253,7 +305,47 @@ func (a *App) loadMessages(chatID string) {
 		return
 	}
 	a.messages = msgs
-	a.messageView.SetMessages(msgs) // уже в правильном порядке (старые → новые)
+	a.messageView.SetMessages(msgs)
+}
+
+func (a *App) sendMessage(text string) {
+	if a.currentChat == nil {
+		return
+	}
+
+	msgID := fmt.Sprintf("%d", time.Now().UnixNano())
+
+	msg := &messages.Message{
+		ID:        msgID,
+		ChatID:    a.currentChat.ID,
+		SenderID:  a.nick,
+		Text:      text,
+		Timestamp: time.Now(),
+		IsOwn:     true,
+		Status:    "sent",
+	}
+
+	if err := a.db.SaveMessage(msg); err != nil {
+		a.rightPanel.SetConnectionStatus(fmt.Sprintf("⚠️ Save error: %v", err))
+		return
+	}
+
+	a.messageView.AddMessage(msg)
+
+	a.db.DB().Exec(
+		"UPDATE chats SET last_message = ?, last_time = ? WHERE id = ?",
+		text, time.Now().Unix(), a.currentChat.ID,
+	)
+
+	for _, chat := range a.chats {
+		if chat.ID == a.currentChat.ID {
+			chat.LastMessage = text
+			chat.LastTime = time.Now()
+			break
+		}
+	}
+
+	a.chatList.SetChats(a.chats)
 }
 
 func (a *App) renderTopBar() string {
@@ -271,11 +363,7 @@ func (a *App) renderTopBar() string {
 		Foreground(lipgloss.Color("#00ff00")).
 		MarginRight(1)
 
-	left := lipgloss.JoinHorizontal(
-		lipgloss.Left,
-		titleStyle.Render(title),
-	)
-
+	left := lipgloss.JoinHorizontal(lipgloss.Left, titleStyle.Render(title))
 	right := statusStyle.Render("● ONLINE")
 
 	return lipgloss.NewStyle().
@@ -284,4 +372,10 @@ func (a *App) renderTopBar() string {
 		BorderBottom(true).
 		BorderBottomForeground(a.theme.Border).
 		Render(lipgloss.JoinHorizontal(lipgloss.Left, left, right))
+}
+
+func (a *App) Run() error {
+	p := tea.NewProgram(a)
+	_, err := p.Run()
+	return err
 }
