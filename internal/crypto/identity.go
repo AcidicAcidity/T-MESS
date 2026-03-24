@@ -3,7 +3,6 @@ package crypto
 import (
 	"encoding/hex"
 	"encoding/pem"
-	"fmt"
 	"os"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -21,26 +20,19 @@ type Identity struct {
 
 // GenerateNewIdentity создаёт новую идентичность из мнемонической фразы
 func GenerateNewIdentity() (*Identity, error) {
-	// 1. Генерируем энтропию для 12 слов
 	entropy, err := bip39.NewEntropy(128)
 	if err != nil {
 		return nil, err
 	}
 
-	// 2. Получаем мнемоническую фразу
 	mnemonic, err := bip39.NewMnemonic(entropy)
 	if err != nil {
 		return nil, err
 	}
 
-	// 3. Генерируем seed из мнемоники
 	seed := bip39.NewSeed(mnemonic, "")
-
-	// 4. Создаём Ed25519 ключ из seed
-	// Используем стандартную библиотеку ed25519 для генерации ключа
 	privateKey := ed25519.NewKeyFromSeed(seed[:32])
 
-	// 5. Конвертируем в libp2p формат
 	privKey, err := crypto.UnmarshalEd25519PrivateKey(privateKey)
 	if err != nil {
 		return nil, err
@@ -63,15 +55,19 @@ func GenerateNewIdentity() (*Identity, error) {
 func LoadOrCreateIdentity(path string) (*Identity, error) {
 	data, err := os.ReadFile(path)
 	if err == nil {
-		// Загружаем существующий ключ
+		// Пытаемся загрузить существующий ключ
 		block, _ := pem.Decode(data)
 		if block == nil {
-			return nil, fmt.Errorf("failed to decode PEM block")
+			// Если не удалось распарсить PEM, удаляем повреждённый файл и создаём новый
+			os.Remove(path)
+			return createAndSaveIdentity(path)
 		}
 
 		privKey, err := crypto.UnmarshalPrivateKey(block.Bytes)
 		if err != nil {
-			return nil, err
+			// Если не удалось распарсить ключ, удаляем повреждённый файл и создаём новый
+			os.Remove(path)
+			return createAndSaveIdentity(path)
 		}
 
 		peerID, err := peer.IDFromPrivateKey(privKey)
@@ -86,13 +82,17 @@ func LoadOrCreateIdentity(path string) (*Identity, error) {
 		}, nil
 	}
 
-	// Создаём новый
+	// Файла нет — создаём новый
+	return createAndSaveIdentity(path)
+}
+
+// createAndSaveIdentity создаёт новую идентичность и сохраняет
+func createAndSaveIdentity(path string) (*Identity, error) {
 	identity, err := GenerateNewIdentity()
 	if err != nil {
 		return nil, err
 	}
 
-	// Сохраняем ключ
 	keyBytes, err := identity.PrivateKey.Raw()
 	if err != nil {
 		return nil, err
@@ -107,7 +107,6 @@ func LoadOrCreateIdentity(path string) (*Identity, error) {
 		return nil, err
 	}
 
-	// Сохраняем мнемонику отдельно
 	mnemonicPath := path + ".mnemonic"
 	if err := os.WriteFile(mnemonicPath, []byte(identity.Mnemonic), 0600); err != nil {
 		return nil, err

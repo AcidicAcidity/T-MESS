@@ -24,7 +24,7 @@ func NewApp(identity *crypto.Identity, db *storage.Database) *App {
 		splash:   NewSplashScreen(),
 		identity: identity,
 		db:       db,
-		theme:    Matrix, // по умолчанию матричная тема
+		theme:    Matrix,
 	}
 }
 
@@ -37,13 +37,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
+		a.splash.SetSize(msg.Width, msg.Height)
 
 	case tea.KeyMsg:
-		if !a.ready && msg.String() == "enter" {
-			a.ready = true
+		if !a.ready {
 			return a, nil
 		}
-		if a.ready && msg.String() == "ctrl+c" {
+		if msg.String() == "ctrl+c" {
 			return a, tea.Quit
 		}
 	}
@@ -51,6 +51,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !a.ready {
 		var cmd tea.Cmd
 		a.splash, cmd = a.splash.Update(msg)
+		if a.splash.IsDone() {
+			a.ready = true
+			return a, nil
+		}
 		return a, cmd
 	}
 
@@ -62,7 +66,6 @@ func (a *App) View() string {
 		return a.splash.View()
 	}
 
-	// Временное главное окно, пока не добавили компоненты
 	infoStyle := lipgloss.NewStyle().
 		Foreground(a.theme.Primary).
 		Border(lipgloss.RoundedBorder()).
@@ -89,7 +92,6 @@ func (a *App) View() string {
 	)
 }
 
-// Run запускает TUI приложение
 func (a *App) Run() error {
 	p := tea.NewProgram(a)
 	_, err := p.Run()

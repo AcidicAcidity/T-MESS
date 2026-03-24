@@ -14,6 +14,8 @@ type SplashScreen struct {
 	progress int
 	messages []string
 	done     bool
+	width    int
+	height   int
 }
 
 var asciiLogo = `
@@ -61,7 +63,7 @@ func (s *SplashScreen) Update(msg tea.Msg) (*SplashScreen, tea.Cmd) {
 				return splashTickMsg{}
 			})
 		} else if s.progress < 100 {
-			s.progress += 10
+			s.progress += 5
 			if s.progress >= 100 {
 				s.done = true
 				return s, nil
@@ -83,17 +85,15 @@ func (s *SplashScreen) View() string {
 		Foreground(lipgloss.Color("#00ff00")).
 		Bold(true)
 
-	// Список инициализации
 	var initLog strings.Builder
 	for i := 0; i < s.phase && i < len(s.messages); i++ {
 		status := "✓"
-		if i == s.phase-1 {
+		if i == s.phase-1 && s.progress < 100 {
 			status = ">"
 		}
 		initLog.WriteString(fmt.Sprintf("  %s %s\n", status, s.messages[i]))
 	}
 
-	// Прогресс-бар
 	barWidth := 50
 	filled := int(float64(barWidth) * float64(s.progress) / 100)
 	progressBar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
@@ -111,9 +111,21 @@ func (s *SplashScreen) View() string {
 		fmt.Sprintf("  %d%%", s.progress),
 	)
 
-	return lipgloss.Place(
-		80, 30,
-		lipgloss.Center, lipgloss.Center,
-		content,
-	)
+	if s.width > 0 && s.height > 0 {
+		return lipgloss.Place(
+			s.width, s.height,
+			lipgloss.Center, lipgloss.Center,
+			content,
+		)
+	}
+	return content
+}
+
+func (s *SplashScreen) SetSize(width, height int) {
+	s.width = width
+	s.height = height
+}
+
+func (s *SplashScreen) IsDone() bool {
+	return s.done
 }
