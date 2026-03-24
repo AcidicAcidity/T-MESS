@@ -40,7 +40,7 @@ func main() {
 
 	// 5. Запускаем TUI
 	app := tui.NewApp(identity, db)
-	if _, err := app.Run(); err != nil {
+	if err := app.Run(); err != nil {
 		log.Fatalf("TUI error: %v", err)
 	}
 }
