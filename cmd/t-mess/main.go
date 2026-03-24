@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -15,7 +14,7 @@ import (
 )
 
 func main() {
-	// 1. Путь к данным
+	// Настройка логгирования в файл
 	dataDir, err := storage.GetDataDir()
 	if err != nil {
 		log.Fatalf("Failed to get data dir: %v", err)
@@ -24,23 +23,34 @@ func main() {
 		log.Fatalf("Failed to create data dir: %v", err)
 	}
 
-	// 2. Загрузка идентичности
+	logFile, err := os.OpenFile(dataDir+"/t-mess.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatalf("Failed to open log file: %v", err)
+	}
+	defer logFile.Close()
+
+	// Пишем логи и в файл, и в консоль (до TUI)
+	log.SetOutput(logFile)
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
+	// 1. Загрузка идентичности
 	identityPath := storage.GetIdentityPath()
 	identity, err := crypto.LoadOrCreateIdentity(identityPath)
 	if err != nil {
 		log.Fatalf("Failed to load/create identity: %v", err)
 	}
-	fmt.Printf("Node ID: %s\n", identity.PeerID)
+	log.Printf("Node ID: %s", identity.PeerID)
 
-	// 3. База данных
+	// 2. База данных
 	dbPath := storage.GetDBPath()
 	db, err := storage.NewDatabase(dbPath)
 	if err != nil {
 		log.Fatalf("Failed to open database: %v", err)
 	}
 	defer db.Close()
+	log.Printf("Database initialized at %s", dbPath)
 
-	// 4. Запуск P2P узла
+	// 3. Запуск P2P узла
 	ctx := context.Background()
 	p2pNode, err := p2p.NewNode(ctx, identity.PrivateKey)
 	if err != nil {
@@ -48,21 +58,21 @@ func main() {
 	}
 	defer p2pNode.Close()
 
-	fmt.Printf("P2P node started: %s\n", p2pNode.ID())
-	fmt.Printf("Listening on: %v\n", p2pNode.Addrs())
+	log.Printf("P2P node started: %s", p2pNode.ID())
+	log.Printf("Listening on: %v", p2pNode.Addrs())
 
-	// 5. Обработка сигналов завершения
+	// 4. Обработка сигналов завершения
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
 		<-sigChan
-		fmt.Println("\nShutting down...")
+		log.Println("Shutting down...")
 		p2pNode.Close()
 		os.Exit(0)
 	}()
 
-	// 6. Запуск TUI (пока без интеграции с P2P)
+	// 5. Запуск TUI
 	app := tui.NewApp(identity, db)
 	if err := app.Run(); err != nil {
 		log.Fatalf("TUI error: %v", err)
