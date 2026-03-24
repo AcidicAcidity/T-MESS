@@ -19,7 +19,8 @@ type Message struct {
 type Chat struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
-	Type        string    `json:"type"` // direct, group
+	Type        string    `json:"type"` // direct, group, local
+	Avatar      string    `json:"avatar"`
 	LastMessage string    `json:"last_message"`
 	LastTime    time.Time `json:"last_time"`
 	UnreadCount int       `json:"unread_count"`

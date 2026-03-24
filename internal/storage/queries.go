@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"database/sql"
 	"time"
 
 	"github.com/AcidicAcidity/t-mess/internal/messages"
@@ -15,13 +16,13 @@ func (d *Database) SaveMessage(msg *messages.Message) error {
 	return err
 }
 
-// GetMessages возвращает последние N сообщений для чата
-func (d *Database) GetMessages(chatID string, limit int) ([]messages.Message, error) {
+// GetMessages возвращает последние N сообщений для чата (от старых к новым)
+func (d *Database) GetMessages(chatID string, limit int) ([]*messages.Message, error) {
 	rows, err := d.db.Query(`
         SELECT id, chat_id, sender_id, text, timestamp, is_own, status
         FROM messages
         WHERE chat_id = ?
-        ORDER BY timestamp DESC
+        ORDER BY timestamp ASC
         LIMIT ?
     `, chatID, limit)
 	if err != nil {
@@ -29,9 +30,9 @@ func (d *Database) GetMessages(chatID string, limit int) ([]messages.Message, er
 	}
 	defer rows.Close()
 
-	var msgs []messages.Message
+	var msgs []*messages.Message
 	for rows.Next() {
-		var msg messages.Message
+		msg := &messages.Message{}
 		var ts int64
 		err := rows.Scan(&msg.ID, &msg.ChatID, &msg.SenderID, &msg.Text, &ts, &msg.IsOwn, &msg.Status)
 		if err != nil {
@@ -43,10 +44,10 @@ func (d *Database) GetMessages(chatID string, limit int) ([]messages.Message, er
 	return msgs, nil
 }
 
-// GetChats возвращает список чатов
-func (d *Database) GetChats() ([]messages.Chat, error) {
+// GetChats возвращает список чатов (указатели)
+func (d *Database) GetChats() ([]*messages.Chat, error) {
 	rows, err := d.db.Query(`
-        SELECT id, name, type, last_message, last_time, unread_count
+        SELECT id, name, type, avatar, last_message, last_time, unread_count
         FROM chats
         ORDER BY last_time DESC
     `)
@@ -55,13 +56,17 @@ func (d *Database) GetChats() ([]messages.Chat, error) {
 	}
 	defer rows.Close()
 
-	var chats []messages.Chat
+	var chats []*messages.Chat
 	for rows.Next() {
-		var chat messages.Chat
+		chat := &messages.Chat{}
 		var lastTime int64
-		err := rows.Scan(&chat.ID, &chat.Name, &chat.Type, &chat.LastMessage, &lastTime, &chat.UnreadCount)
+		var avatar sql.NullString
+		err := rows.Scan(&chat.ID, &chat.Name, &chat.Type, &avatar, &chat.LastMessage, &lastTime, &chat.UnreadCount)
 		if err != nil {
 			return nil, err
+		}
+		if avatar.Valid {
+			chat.Avatar = avatar.String
 		}
 		chat.LastTime = time.Unix(lastTime, 0)
 		chats = append(chats, chat)
